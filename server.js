@@ -6,6 +6,7 @@ const cors = require('cors');
 const dns = require('dns');
 const urlParser = require('url');
 const app = express();
+const { getResponse, makeShortUrl } = require('./util');
 
 // Basic Configuration
 const port = process.env.PORT || 3000;
