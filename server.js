@@ -1,76 +1,90 @@
-require('dotenv').config();
 const express = require('express');
-const Mongoose = require('mongoose');
-const BodyParser = require('body-parser');
+const mongo = require('mongodb');
+const mongoose = require('mongoose');
+const bodyParser = require('body-parser');
 const cors = require('cors');
-const dns = require('dns');
-const urlParser = require('url');
-const app = express();
-const { getResponse, makeShortUrl } = require('./util');
+const validURL = require('valid-url');
+const shortID = require('shortid');
+require('dotenv').config();
 
-// Basic Configuration
+const app = express();
 const port = process.env.PORT || 3000;
 
-Mongoose.connect(process.env.DB_URI, {
+// MongoDB and mongoose connect
+mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
 
-const urlModel = Mongoose.model('Url', {
-	longUrl: String,
-	shortUrl: String,
+// Database schema
+const urlSchema = new mongoose.Schema({
+  originalURL: String,
+  shortURL: String,
 });
 
-app.use(BodyParser.json());
-app.use(BodyParser.urlencoded({ extended: true }));
+const URL = mongoose.model('URL', urlSchema);
+
+// App middleware
+app.use(cors());
+app.use(bodyParser.urlencoded({ extended: false }));
 app.use('/public', express.static(`${process.cwd()}/public`));
-
 app.get('/', function (req, res) {
-  res.sendFile(process.cwd() + '/views/index.html');
+  res.sendFile(`${process.cwd()}/views/index.html`);
 });
 
-// Your first API endpoint
-app.get('/api/hello', function (req, res) {
-  res.json({ greeting: 'hello API' });
-});
-
-app.get('/api/shorturl/:shortUrl', async (req, res) => {
-	try {
-		const doc = await urlModel.findOne({ shortUrl: req.params.shortUrl });
-		res.redirect(doc.longUrl);
-	} catch (error) {
-		res.status(500).send(error);
-	}
-});
-
-// Endpoint for create a new instancee of urls
-app.post('/api/shorturl', function (req, res) {
-  try {
-    const { url: longUrl } = req.body;
-    const { hostname } = new URL(longUrl);
-
-    dns.lookup(hostname, async (err) => {
-      if (!err) {
-        const shortenedUrl = await urlModel.findOne({ longUrl });
-
-        if (shortenedUrl) {
-          res.send(getResponse(shortenedUrl));
-        } else {
-          const shortUrl = makeShortUrl(longUrl);
-          const url = new urlModel({ longUrl, shortUrl });
-          const doc = await url.save();
-
-          res.send(getResponse(doc));
-        }
-      } else {
-        res.send({ error: 'invalid URL' });
-      }
+// Response for POST request
+app.post('/api/shorturl/new', async (req, res) => {
+  const { url } = req.body;
+  const shortURL = shortID.generate();
+  console.log(validURL.isUri(url));
+  if (validURL.isWebUri(url) === undefined) {
+    res.json({
+      error: 'invalid url',
     });
-  } catch (error) {
-    res.status(500).send(error);
+  } else {
+    try {
+      let findOne = await URL.findOne({
+        originalURL: url,
+      });
+      if (findOne) {
+        res.json({
+          original_url: findOne.originalURL,
+          short_url: findOne.shortURL,
+        });
+      } else {
+        findOne = new URL({
+          originalURL: url,
+          shortURL,
+        });
+        await findOne.save();
+        res.json({
+          original_url: findOne.originalURL,
+          short_url: findOne.shortURL,
+        });
+      }
+    } catch (err) {
+      console.log(err);
+      res.status(500).json('Server error..');
+    }
   }
 });
 
+// Redirect shortened URL to Original URL
+app.get('/api/shorturl/:shortURL?', async (req, res) => {
+  try {
+    const urlParams = await URL.findOne({
+      shortURL: req.params.shortURL,
+    });
+    if (urlParams) {
+      return res.redirect(urlParams.originalURL);
+    }
+    return res.status(404).json('No URL found');
+  } catch (err) {
+    console.log(err);
+    res.status(500).json('Server error..');
+  }
+});
+// Listens for connections
 app.listen(port, function () {
-  console.log(`Listening on port ${port}`);
+  console.log('Node.js listening ...');
 });
